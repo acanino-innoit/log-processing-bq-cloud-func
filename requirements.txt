@@ -1,0 +1,8 @@
+pandas
+pandas-gbq
+python-dotenv
+google-cloud-bigquery
+db-dtypes
+google-cloud-bigquery-storage
+openai
+functions-framework
