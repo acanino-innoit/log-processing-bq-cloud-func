@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 import json
-from db import timing
+from db import async_timing
 
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -28,8 +28,8 @@ Return ONLY the resulting tasks as a JSON array. Do not include any explanation,
 
 
 
-@timing(f"⏱️ Fetch timing for llm call")
-def call_openai_summary_evaluation( intents_json: list ,conversation_json: list) -> str:
+@async_timing(f"⏱️ Fetch timing for llm call")
+async def call_openai_summary_evaluation( intents_json: list ,conversation_json: list) -> str:
     formatted_prompt = PROMPT_TEMPLATE.format(
         conversation_json=json.dumps(conversation_json, ensure_ascii=False, indent=2),
         intents_json=json.dumps(intents_json, ensure_ascii=False, indent=2)
