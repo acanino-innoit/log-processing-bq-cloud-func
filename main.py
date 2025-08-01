@@ -9,6 +9,7 @@ import llm_functions as llm
 from db import bq_client as bq_client
 import warnings
 from functions_framework import http
+from db import timing
 
 # client overwritten to test locally # remove when we are in cloud env
 
@@ -18,6 +19,7 @@ PROJECT_ID = db.bq_config.project_id
 #LOCATION = os.getenv("LOCATION", "europe-west1")
 #TABLE_THREAD = os.getenv("BQ_TABLE_THREAD", "thread_summary")
 #TABLE_MESSAGE = os.getenv("BQ_TABLE_MESSAGE", "message_details")
+
 
 def get_summary_json_by_thread_id_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> list:
     try:
@@ -47,7 +49,7 @@ def get_summary_json_by_thread_id_bq(client: bigquery.Client, config: BQConfig, 
 
 
 
-
+@timing(f"⏱️ Fetch summary for initial extract_task_metrics function")
 def extract_task_metrics(evaluation: list) -> dict:
     total_tasks = len(evaluation)
     in_scope = sum(1 for e in evaluation if e.get("in_scope"))

@@ -3,18 +3,24 @@ import json
 from config_bq import BQConfig
 from google.cloud import bigquery
 import pandas as pd
+import time
+from functools import wraps
 
 
-# def insert_thread_summary(conn: sqlite3.Connection, thread_id: str, created_at: int, summary: list, state: str = "to_be_processed", user_id: str = None, user_mail: str = None) -> None:
-#     cur = conn.cursor()
-#     cur.execute(
-#         """
-#         INSERT OR REPLACE INTO thread_summary (thread_id, created_at, summary_json, state, user_id, user_mail)
-#         VALUES (?, ?, ?, ?, ?, ?);
-#         """,
-#         (thread_id, created_at, json.dumps(summary, ensure_ascii=False), state, user_id, user_mail),
-#     )
-#     conn.commit()
+def timing(label="⏱️ Execution time"):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            print(f"{label} - started")
+            start = time.time()
+            result = func(*args, **kwargs)
+            end = time.time()
+            print(f"{label} - finished in {end - start:.2f} sec")
+            return result
+        return wrapper
+    return decorator
+
+@timing(f"⏱️ Fetch timing for insert_task_details_bq ")
 def insert_task_details_bq(
     client: bigquery.Client,
     table_id: str,
@@ -49,16 +55,6 @@ def insert_task_details_bq(
     except Exception as e:
         print(f"❌ Failed to insert task details for thread {thread_id}: {e}")
 
-# def update_user_info_if_missing(conn: sqlite3.Connection, thread_id: str, user_id: str, user_mail: str) -> None:
-#     cur = conn.cursor()
-#     cur.execute("""
-#         UPDATE thread_summary
-#         SET user_id = COALESCE(user_id, ?),
-#             user_mail = COALESCE(user_mail, ?)
-#         WHERE thread_id = ?;
-#     """, (user_id, user_mail, thread_id))
-#     conn.commit()
-
 def row_exists(client: bigquery.Client, table_id: str, thread_id: str) -> bool:
     query = f"""
         SELECT 1 FROM `{table_id}` WHERE thread_id = @thread_id LIMIT 1
@@ -70,7 +66,7 @@ def row_exists(client: bigquery.Client, table_id: str, thread_id: str) -> bool:
     ))
     return job.result().total_rows > 0
 
-
+@timing(f"⏱️ Fetch timing for insert_processed_conversation_bq ")
 def insert_processed_conversation_bq(
     client: bigquery.Client,
     table_id: str,
@@ -106,7 +102,7 @@ def insert_processed_conversation_bq(
         print(f"❌ Error inserting processed_conversation for {thread_id}: {e}")
         raise
 
-
+@timing(f"⏱️ Fetch timing for mark_thread_as_processed_bq ")
 def mark_thread_as_processed_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> None:
     try:
         query = f"""
@@ -123,6 +119,7 @@ def mark_thread_as_processed_bq(client: bigquery.Client, config: BQConfig, threa
         print(f"✅ Marked thread {thread_id} as processed")
     except Exception as e:
         print(f"❌ Failed to mark thread {thread_id} as processed: {e}")
+
 
 def mark_thread_as_error_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> None:
     try:
@@ -170,7 +167,7 @@ def rollback_thread_data_bq(client: bigquery.Client, bq_config: BQConfig, thread
     except Exception as e:
         print(f"⚠️ Rollback failed for thread_id {thread_id}: {e}")
 
-
+@timing(f"⏱️ Fetch summary for initial get_summary_json_by_thread_id_bq")
 def get_summary_json_by_thread_id_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> list:
     try:
         table_id = config.full_table_id(config.thread_table)
@@ -228,6 +225,7 @@ def create_table_if_not_exists(client: bigquery.Client, config: BQConfig, table_
         print(f"✅ Table {table_id} created.")
 
 
+@timing(f"⏱️ Fetch summary for initial get_thread_created_at_bq function")
 def get_thread_created_at_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> int | None:
     """
     Retrieve the created_at timestamp for a given thread_id from BigQuery.
