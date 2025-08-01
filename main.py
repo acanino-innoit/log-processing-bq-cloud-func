@@ -3,53 +3,19 @@ import json
 import asyncio
 import db
 import pandas as pd
-from google.cloud import bigquery
-from  config_bq import BQConfig
 import llm_functions as llm
-from db import bq_client as bq_client
+from db import bq_client as bq_client, async_timing
 import warnings
 from functions_framework import http
-from db import timing
 
 # client overwritten to test locally # remove when we are in cloud env
 
 
 PROJECT_ID = db.bq_config.project_id
-#DATASET = os.getenv("DATASET", "logs_timbal")
-#LOCATION = os.getenv("LOCATION", "europe-west1")
-#TABLE_THREAD = os.getenv("BQ_TABLE_THREAD", "thread_summary")
-#TABLE_MESSAGE = os.getenv("BQ_TABLE_MESSAGE", "message_details")
-
-
-def get_summary_json_by_thread_id_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> list:
-    try:
-        table_id = config.full_table_id(config.thread_table)
-        query = f"""
-            SELECT summary_json
-            FROM `{table_id}`
-            WHERE thread_id = @thread_id
-            LIMIT 1
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id)
-            ]
-        )
-        result = client.query(query, job_config=job_config).to_dataframe()
-
-        if not result.empty:
-            return json.loads(result.iloc[0]["summary_json"])
-        else:
-            return []
-    except Exception as e:
-        print(f"❌ Failed to get summary for thread {thread_id}: {e}")
-        return []
 
     
 
 
-
-@timing(f"⏱️ Fetch summary for initial extract_task_metrics function")
 def extract_task_metrics(evaluation: list) -> dict:
     total_tasks = len(evaluation)
     in_scope = sum(1 for e in evaluation if e.get("in_scope"))
@@ -73,9 +39,9 @@ def extract_task_metrics(evaluation: list) -> dict:
 
 
 
-async def evaluate_all_threads(bq_client = bq_client, bq_config = db.bq_config):
-    
-    #checking what rows have to be processed: 
+@async_timing(f"⏱️ Fetch summary for OVERALL function")
+async def evaluate_all_threads(bq_client=bq_client, bq_config=db.bq_config):
+    # Step 1: Fetch thread IDs to process
     thread_id_list = db.fetch_thread_ids_to_process(bq_client, bq_config)
     if not thread_id_list:
         print("✅ No conversations to be processed. Exiting.")
@@ -85,7 +51,7 @@ async def evaluate_all_threads(bq_client = bq_client, bq_config = db.bq_config):
     db.create_table_if_not_exists(bq_client, bq_config, bq_config.processed_table, db.processed_schema)
     db.create_table_if_not_exists(bq_client, bq_config, bq_config.task_table, db.task_details_schema)
 
-    # reading the intents csv and parsing them into a json file.
+    # Step 2: Read intents JSON
     try:
         print("📄 Reading intents_summary.csv...")
         intents_csv = pd.read_csv("intents_summary.csv")
@@ -94,58 +60,97 @@ async def evaluate_all_threads(bq_client = bq_client, bq_config = db.bq_config):
     except Exception as e:
         print(f"❌ Error loading intents_summary.csv: {e}")
         intents_json = "[]"
-    
-    
-    # process threads individually
+
+    # Step 3: Preload all summaries and created_at
+    thread_data_map = db.optimize_get_summary_and_created_at(
+        bq_client, bq_config.full_table_id(bq_config.thread_table), thread_id_list
+    )
+
+    processed_rows = []
+    task_rows = []
+    successful_threads = []
+    failed_threads = []
+    rollback_threads = []
+
+    # Step 4: Process each thread
     for thread_id in thread_id_list:
-        summary = db.get_summary_json_by_thread_id_bq(bq_client, bq_config, thread_id)
-        if not summary:
+        data = thread_data_map.get(thread_id)
+        if not data or not data.get("summary_json"):
             print(f"⚠️ No summary found for thread {thread_id}")
+            failed_threads.append(thread_id)
             continue
 
+        summary = data["summary_json"]
+        created_at = data["created_at"]
+
         try:
-            # flags used to implement rollback logic
-            inserted_flags = {"processed": False, "tasks": False}
             result = llm.call_openai_summary_evaluation(intents_json, summary)
-            print(f"\n🧠 Evaluation for thread {thread_id} succesfully compleated")
+            print(f"🧠 Evaluation for thread {thread_id} completed.")
 
             cleaned_result = result.strip().removeprefix("```json").removesuffix("```").strip()
-
-            # Debugging output for malformed LLM responses
             if not cleaned_result.startswith("["):
                 print(f"⚠️ Unexpected format from LLM for thread {thread_id}:\n{result}")
 
             parsed_result = json.loads(cleaned_result)
             metrics = extract_task_metrics(parsed_result)
-            created_at = db.get_thread_created_at_bq(bq_client, bq_config, thread_id)
-            # inserting data in tables:
 
-            db.insert_processed_conversation_bq(
-                bq_client,
-                bq_config.full_table_id(bq_config.processed_table),
-                thread_id,
-                metrics,
-                parsed_result,
-                created_at
-            )
-            inserted_flags["processed"] = True
-            db.insert_task_details_bq(
-                    bq_client,
-                    bq_config.full_table_id(bq_config.task_table),
-                    thread_id,
-                    parsed_result,
-                    created_at
-                )
-            inserted_flags["tasks"] = True
+            processed_rows.append({
+                "thread_id": thread_id,
+                "created_at": created_at,
+                "total_tasks": metrics["total_tasks"],
+                "in_scope_tasks": metrics["in_scope_tasks"],
+                "out_scope_tasks": metrics["out_scope_tasks"],
+                "solved": metrics["solved_tasks"],
+                "partially_solved": metrics["partially_solved_tasks"],
+                "not_solved": metrics["not_solved_tasks"],
+                "out_scope_not_solved": metrics["out_scope_not_solved_tasks"],
+                "evaluation_json": json.dumps(parsed_result, ensure_ascii=False),
+            })
 
-            db.mark_thread_as_processed_bq(bq_client, bq_config, thread_id)
-            
+            for task in parsed_result:
+                task_rows.append({
+                    "thread_id": thread_id,
+                    "created_at": created_at,
+                    "in_scope": task.get("in_scope"),
+                    "label": task.get("label"),
+                    "value": task.get("value"),
+                })
+
+            successful_threads.append(thread_id)
 
         except Exception as e:
             print(f"❌ Failed to evaluate thread {thread_id}: {e}")
+            failed_threads.append(thread_id)
+            rollback_threads.append(thread_id)
 
-            db.rollback_thread_data_bq(bq_client, bq_config, thread_id, inserted_flags)
-            db.mark_thread_as_error_bq(bq_client, bq_config, thread_id)
+    # Step 5: Bulk insert
+    try:
+        db.optimize_bulk_inserts(
+            bq_client,
+            bq_config.full_table_id(bq_config.processed_table),
+            bq_config.full_table_id(bq_config.task_table),
+            processed_rows,
+            task_rows
+        )
+    except Exception as e:
+        print(f"❌ Bulk insert failed: {e}")
+        rollback_threads += successful_threads
+        successful_threads = []
+
+    # Step 6: Rollback if necessary
+    if rollback_threads:
+        db.rollback_thread_data_bq(bq_client, bq_config, rollback_threads)
+
+    # Step 7: Bulk mark threads
+    if successful_threads:
+        db.mark_threads_as_processed_bq(bq_client, bq_config, successful_threads)
+    if failed_threads:
+        db.mark_threads_as_error_bq(bq_client, bq_config, failed_threads)
+
+    return {
+        "status": "done",
+        "message": f"✅ {len(successful_threads)} threads processed, ❌ {len(failed_threads)} failed."
+    }
 
 @http
 def process_logs_bq(request):

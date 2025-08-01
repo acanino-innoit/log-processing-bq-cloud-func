@@ -5,7 +5,7 @@ from google.cloud import bigquery
 import pandas as pd
 import time
 from functools import wraps
-
+from typing import List
 
 def timing(label="⏱️ Execution time"):
     def decorator(func):
@@ -20,123 +20,63 @@ def timing(label="⏱️ Execution time"):
         return wrapper
     return decorator
 
-@timing(f"⏱️ Fetch timing for insert_task_details_bq ")
-def insert_task_details_bq(
-    client: bigquery.Client,
-    table_id: str,
-    thread_id: str,
-    tasks: list[dict],
-    created_at: int
-) -> None:
-    if not tasks:
-        print(f"⚠️ No task details to insert for thread {thread_id}.")
-        return
 
-    try:
-        # Prepare DataFrame for insertion
-        rows = [
-            {
-                "thread_id": thread_id,
-                "created_at": created_at,
-                "in_scope": task.get("in_scope"),
-                "label": task.get("label"),
-                "value": task.get("value")
-            }
-            for task in tasks
-        ]
-        df = pd.DataFrame(rows)
+def async_timing(label="⏱️ Execution time"):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            print(f"{label} - started")
+            start = time.time()
+            result = await func(*args, **kwargs)
+            end = time.time()
+            print(f"{label} - finished in {end - start:.2f} sec")
+            return result
+        return wrapper
+    return decorator
 
-        # Load into BigQuery using WRITE_APPEND
-        job_config = bigquery.LoadJobConfig(write_disposition="WRITE_APPEND")
-        job = client.load_table_from_dataframe(df, table_id, job_config=job_config)
-        job.result()
-        print(f"✅ Inserted {len(df)} task details into {table_id} for thread {thread_id}")
 
-    except Exception as e:
-        print(f"❌ Failed to insert task details for thread {thread_id}: {e}")
-
-def row_exists(client: bigquery.Client, table_id: str, thread_id: str) -> bool:
-    query = f"""
-        SELECT 1 FROM `{table_id}` WHERE thread_id = @thread_id LIMIT 1
-    """
-    job = client.query(query, job_config=bigquery.QueryJobConfig(
-        query_parameters=[
-            bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id)
-        ]
-    ))
-    return job.result().total_rows > 0
-
-@timing(f"⏱️ Fetch timing for insert_processed_conversation_bq ")
-def insert_processed_conversation_bq(
-    client: bigquery.Client,
-    table_id: str,
-    thread_id: str,
-    metrics: dict,
-    eval_data: list,
-    created_at: int
-) -> None:
-    try:
-        row = {
-            "thread_id": thread_id,
-            "created_at": created_at,
-            "total_tasks": metrics["total_tasks"],
-            "in_scope_tasks": metrics["in_scope_tasks"],
-            "out_scope_tasks": metrics["out_scope_tasks"],
-            "solved": metrics["solved_tasks"],
-            "partially_solved": metrics["partially_solved_tasks"],
-            "not_solved": metrics["not_solved_tasks"],
-            "out_scope_not_solved": metrics["out_scope_not_solved_tasks"],
-            "evaluation_json": json.dumps(eval_data, ensure_ascii=False)
-        }
-
-        df = pd.DataFrame([row])
-
-        job_config = bigquery.LoadJobConfig(
-            write_disposition="WRITE_TRUNCATE" if row_exists(client, table_id, thread_id) else "WRITE_APPEND"
-        )
-
-        client.load_table_from_dataframe(df, table_id, job_config=job_config).result()
-        print(f"✅ Row for thread_id {thread_id} inserted/updated in processed_conversation")
-
-    except Exception as e:
-        print(f"❌ Error inserting processed_conversation for {thread_id}: {e}")
-        raise
 
 @timing(f"⏱️ Fetch timing for mark_thread_as_processed_bq ")
-def mark_thread_as_processed_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> None:
+def mark_threads_as_processed_bq(client: bigquery.Client, config: BQConfig, thread_ids: List[str]) -> None:
+    if not thread_ids:
+        return
+
     try:
         query = f"""
         UPDATE `{config.full_table_id(config.thread_table)}`
         SET state = 'processed'
-        WHERE thread_id = @thread_id
+        WHERE thread_id IN UNNEST(@thread_ids)
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id)
+                bigquery.ArrayQueryParameter("thread_ids", "STRING", thread_ids)
             ]
         )
         client.query(query, job_config=job_config).result()
-        print(f"✅ Marked thread {thread_id} as processed")
+        print(f"✅ Marked {len(thread_ids)} threads as processed")
     except Exception as e:
-        print(f"❌ Failed to mark thread {thread_id} as processed: {e}")
+        print(f"❌ Failed to bulk mark threads as processed: {e}")
 
+@timing(f"⏱️ Fetch timing for mark_threads_as_error_bq ")
+def mark_threads_as_error_bq(client: bigquery.Client, config: BQConfig, thread_ids: List[str]) -> None:
+    if not thread_ids:
+        return
 
-def mark_thread_as_error_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> None:
     try:
         query = f"""
         UPDATE `{config.full_table_id(config.thread_table)}`
         SET state = 'error'
-        WHERE thread_id = @thread_id
+        WHERE thread_id IN UNNEST(@thread_ids)
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id)
+                bigquery.ArrayQueryParameter("thread_ids", "STRING", thread_ids)
             ]
         )
         client.query(query, job_config=job_config).result()
-        print(f"⚠️ Marked thread {thread_id} as error")
+        print(f"⚠️ Marked {len(thread_ids)} threads as error")
     except Exception as e:
-        print(f"❌ Failed to mark thread {thread_id} as error: {e}")
+        print(f"❌ Failed to bulk mark threads as error: {e}")
 
 
 def rollback_thread_data_bq(client: bigquery.Client, bq_config: BQConfig, thread_id: str, inserted: dict):
@@ -167,33 +107,9 @@ def rollback_thread_data_bq(client: bigquery.Client, bq_config: BQConfig, thread
     except Exception as e:
         print(f"⚠️ Rollback failed for thread_id {thread_id}: {e}")
 
-@timing(f"⏱️ Fetch summary for initial get_summary_json_by_thread_id_bq")
-def get_summary_json_by_thread_id_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> list:
-    try:
-        table_id = config.full_table_id(config.thread_table)
-        query = f"""
-            SELECT summary_json
-            FROM `{table_id}`
-            WHERE thread_id = @thread_id
-            LIMIT 1
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id)
-            ]
-        )
-        result = client.query(query, job_config=job_config).to_dataframe()
-
-        if not result.empty:
-            return json.loads(result.iloc[0]["summary_json"])
-        else:
-            return []
-    except Exception as e:
-        print(f"❌ Failed to get summary for thread {thread_id}: {e}")
-        return []
 
 
-
+@timing(f"⏱️ Fetch summary for initial fetch_thread_ids_to_process function")
 def fetch_thread_ids_to_process(client: bigquery.Client, config: BQConfig) -> list:
     try:
         table_id = config.full_table_id(config.thread_table)
@@ -225,37 +141,51 @@ def create_table_if_not_exists(client: bigquery.Client, config: BQConfig, table_
         print(f"✅ Table {table_id} created.")
 
 
-@timing(f"⏱️ Fetch summary for initial get_thread_created_at_bq function")
-def get_thread_created_at_bq(client: bigquery.Client, config: BQConfig, thread_id: str) -> int | None:
-    """
-    Retrieve the created_at timestamp for a given thread_id from BigQuery.
-    Returns None if the thread is not found or on error.
-    """
+    
+
+@timing(f"⏱️ Fetch timing for initial optimize_get_summary_and_created_at")
+def optimize_get_summary_and_created_at(client, full_table_id, thread_ids):
     try:
-        table_id = config.full_table_id(config.thread_table)
         query = f"""
-        SELECT created_at
-        FROM `{table_id}`
-        WHERE thread_id = @thread_id
-        LIMIT 1
+        SELECT thread_id, summary_json, created_at
+        FROM `{full_table_id}`
+        WHERE thread_id IN UNNEST(@thread_ids)
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("thread_id", "STRING", thread_id)
+                bigquery.ArrayQueryParameter("thread_ids", "STRING", thread_ids)
             ]
         )
         df = client.query(query, job_config=job_config).to_dataframe()
-
-        if df.empty:
-            print(f"⚠️ No created_at found for thread {thread_id}")
-            return None
-
-        return int(df.loc[0, "created_at"])
-
+        return {
+            row["thread_id"]: {
+                "summary_json": json.loads(row["summary_json"]),
+                "created_at": row["created_at"]
+            }
+            for _, row in df.iterrows()
+        }
     except Exception as e:
-        print(f"❌ Failed to fetch created_at for thread {thread_id}: {e}")
-        return None
+        print(f"❌ Failed to batch fetch summaries: {e}")
+        return {}
 
+@timing(f"⏱️ Fetch timing for initial optimize_bulk_inserts")
+def optimize_bulk_inserts(
+    client, processed_table_id, task_table_id,
+    processed_rows: list[dict],
+    task_rows: list[dict]
+):
+    try:
+        if processed_rows:
+            df_proc = pd.DataFrame(processed_rows)
+            client.load_table_from_dataframe(df_proc, processed_table_id).result()
+            print(f"✅ Inserted {len(df_proc)} rows into processed_conversation")
+
+        if task_rows:
+            df_task = pd.DataFrame(task_rows)
+            client.load_table_from_dataframe(df_task, task_table_id).result()
+            print(f"✅ Inserted {len(df_task)} rows into task_details")
+    except Exception as e:
+        print(f"❌ Failed bulk insert: {e}")
 
 # init variables:
 bq_config = BQConfig()

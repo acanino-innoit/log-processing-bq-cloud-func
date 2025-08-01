@@ -28,7 +28,7 @@ Return ONLY the resulting tasks as a JSON array. Do not include any explanation,
 
 
 
-@timing(f"⏱️ Fetch summary for llm call")
+@timing(f"⏱️ Fetch timing for llm call")
 def call_openai_summary_evaluation( intents_json: list ,conversation_json: list) -> str:
     formatted_prompt = PROMPT_TEMPLATE.format(
         conversation_json=json.dumps(conversation_json, ensure_ascii=False, indent=2),
