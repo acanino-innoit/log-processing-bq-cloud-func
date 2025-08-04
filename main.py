@@ -8,6 +8,7 @@ from db import bq_client as bq_client, async_timing
 import warnings
 from functions_framework import http
 
+
 # client overwritten to test locally # remove when we are in cloud env
 
 
