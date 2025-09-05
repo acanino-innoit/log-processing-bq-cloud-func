@@ -8,7 +8,6 @@ from db import bq_client as bq_client, async_timing
 import warnings
 from functions_framework import http
 
-
 # client overwritten to test locally # remove when we are in cloud env
 
 
@@ -26,10 +25,11 @@ async def process_single_thread(thread_id, summary, created_at, intents_json):
 
         parsed_result = json.loads(cleaned_result)
         metrics = extract_task_metrics(parsed_result)
+        utc_created_at = pd.to_datetime(created_at, utc=True)
 
         processed_row = {
             "thread_id": thread_id,
-            "created_at": created_at,
+            "created_at": utc_created_at,
             "total_tasks": metrics["total_tasks"],
             "in_scope_tasks": metrics["in_scope_tasks"],
             "out_scope_tasks": metrics["out_scope_tasks"],
@@ -42,7 +42,7 @@ async def process_single_thread(thread_id, summary, created_at, intents_json):
 
         task_rows = [{
             "thread_id": thread_id,
-            "created_at": created_at,
+            "created_at": utc_created_at,
             "in_scope": task.get("in_scope"),
             "label": task.get("label"),
             "value": task.get("value"),

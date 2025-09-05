@@ -195,7 +195,7 @@ bq_client = bigquery.Client(project=bq_config.project_id)
 # init schemas:
 processed_schema = [
     bigquery.SchemaField("thread_id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("created_at", "INTEGER"),
+    bigquery.SchemaField("created_at", "TIMESTAMP"),  # <- changed from INTEGER
     bigquery.SchemaField("total_tasks", "INTEGER"),
     bigquery.SchemaField("in_scope_tasks", "INTEGER"),
     bigquery.SchemaField("out_scope_tasks", "INTEGER"),
@@ -208,7 +208,7 @@ processed_schema = [
 
 task_details_schema = [
     bigquery.SchemaField("thread_id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("created_at", "INTEGER"),
+    bigquery.SchemaField("created_at", "TIMESTAMP"),  # <- changed from INTEGER
     bigquery.SchemaField("in_scope", "BOOLEAN"),
     bigquery.SchemaField("label", "STRING"),
     bigquery.SchemaField("value", "STRING"),
