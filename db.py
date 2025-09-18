@@ -36,7 +36,7 @@ def async_timing(label="⏱️ Execution time"):
 
 
 
-@timing(f"⏱️ Fetch timing for mark_thread_as_processed_bq ")
+#@timing(f"⏱️ Fetch timing for mark_thread_as_processed_bq ")
 def mark_threads_as_processed_bq(client: bigquery.Client, config: BQConfig, thread_ids: List[str]) -> None:
     if not thread_ids:
         return
@@ -57,7 +57,7 @@ def mark_threads_as_processed_bq(client: bigquery.Client, config: BQConfig, thre
     except Exception as e:
         print(f"❌ Failed to bulk mark threads as processed: {e}")
 
-@timing(f"⏱️ Fetch timing for mark_threads_as_error_bq ")
+#@timing(f"⏱️ Fetch timing for mark_threads_as_error_bq ")
 def mark_threads_as_error_bq(client: bigquery.Client, config: BQConfig, thread_ids: List[str]) -> None:
     if not thread_ids:
         return
@@ -109,7 +109,7 @@ def rollback_thread_data_bq(client: bigquery.Client, bq_config: BQConfig, thread
 
 
 
-@timing(f"⏱️ Fetch summary for initial fetch_thread_ids_to_process function")
+#@timing(f"⏱️ Fetch summary for initial fetch_thread_ids_to_process function")
 def fetch_thread_ids_to_process(client: bigquery.Client, config: BQConfig) -> list:
     try:
         table_id = config.full_table_id(config.thread_table)
@@ -143,7 +143,7 @@ def create_table_if_not_exists(client: bigquery.Client, config: BQConfig, table_
 
     
 
-@timing(f"⏱️ Fetch timing for initial optimize_get_summary_and_created_at")
+#@timing(f"⏱️ Fetch timing for initial optimize_get_summary_and_created_at")
 def optimize_get_summary_and_created_at(client, full_table_id, thread_ids):
     try:
         query = f"""
@@ -168,7 +168,7 @@ def optimize_get_summary_and_created_at(client, full_table_id, thread_ids):
         print(f"❌ Failed to batch fetch summaries: {e}")
         return {}
 
-@timing(f"⏱️ Fetch timing for initial optimize_bulk_inserts")
+#@timing(f"⏱️ Fetch timing for initial optimize_bulk_inserts")
 def optimize_bulk_inserts(
     client, processed_table_id, task_table_id,
     processed_rows: list[dict],
@@ -195,7 +195,7 @@ bq_client = bigquery.Client(project=bq_config.project_id)
 # init schemas:
 processed_schema = [
     bigquery.SchemaField("thread_id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("created_at", "TIMESTAMP"),  # <- changed from INTEGER
+    bigquery.SchemaField("created_at", "INTEGER"),
     bigquery.SchemaField("total_tasks", "INTEGER"),
     bigquery.SchemaField("in_scope_tasks", "INTEGER"),
     bigquery.SchemaField("out_scope_tasks", "INTEGER"),
@@ -208,7 +208,7 @@ processed_schema = [
 
 task_details_schema = [
     bigquery.SchemaField("thread_id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("created_at", "TIMESTAMP"),  # <- changed from INTEGER
+    bigquery.SchemaField("created_at", "INTEGER"),
     bigquery.SchemaField("in_scope", "BOOLEAN"),
     bigquery.SchemaField("label", "STRING"),
     bigquery.SchemaField("value", "STRING"),

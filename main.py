@@ -13,11 +13,11 @@ from functions_framework import http
 
 PROJECT_ID = db.bq_config.project_id
 
-@async_timing(f"⏱️ Fetch summary for OVERALL function")
+#@async_timing(f"⏱️ Fetch summary for process single thread function")
 async def process_single_thread(thread_id, summary, created_at, intents_json):
     try:
         result = await llm.call_openai_summary_evaluation(intents_json, summary)
-        print(f"🧠 Evaluation for thread {thread_id} completed.")
+        #print(f"🧠 Evaluation for thread {thread_id} completed.")
         
         cleaned_result = result.strip().removeprefix("```json").removesuffix("```").strip()
         if not cleaned_result.startswith("["):
@@ -25,11 +25,10 @@ async def process_single_thread(thread_id, summary, created_at, intents_json):
 
         parsed_result = json.loads(cleaned_result)
         metrics = extract_task_metrics(parsed_result)
-        utc_created_at = pd.to_datetime(created_at, utc=True)
 
         processed_row = {
             "thread_id": thread_id,
-            "created_at": utc_created_at,
+            "created_at": created_at,
             "total_tasks": metrics["total_tasks"],
             "in_scope_tasks": metrics["in_scope_tasks"],
             "out_scope_tasks": metrics["out_scope_tasks"],
@@ -42,7 +41,7 @@ async def process_single_thread(thread_id, summary, created_at, intents_json):
 
         task_rows = [{
             "thread_id": thread_id,
-            "created_at": utc_created_at,
+            "created_at": created_at,
             "in_scope": task.get("in_scope"),
             "label": task.get("label"),
             "value": task.get("value"),
@@ -161,7 +160,8 @@ async def evaluate_all_threads(bq_client=bq_client, bq_config=db.bq_config):
         db.mark_threads_as_processed_bq(bq_client, bq_config, successful_threads)
     if failed_threads:
         db.mark_threads_as_error_bq(bq_client, bq_config, failed_threads)
-
+        
+    print(f"✅ {len(successful_threads)} threads processed, ❌ {len(failed_threads)} failed.")
     return {
         "status": "done",
         "message": f"✅ {len(successful_threads)} threads processed, ❌ {len(failed_threads)} failed."

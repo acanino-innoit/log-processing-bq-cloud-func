@@ -9,9 +9,10 @@ openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 PROMPT_TEMPLATE = """
 You are analyzing a conversation between a user and a travel assistant. Your goal is to identify the distinct tasks mentioned by the user and classify them using a label from the predefined taxonomy.
+Remember the number of tasks identified depends just on the user messages, the assistant ones are needed to evaluate whether the task has been solved or not.
 
 Each task should be returned as a JSON object with the following fields:
-- in_scope: true if the task is a question about a specific tourist activity, false otherwise.
+- in_scope: true if the task is a question about a specific tourist activity,(excluding the info about the activity availability) false otherwise.
 - label: a generic label that best fits the task, based on the taxonomy provided below. If no match is found, use "Otras".
 - value: one of "solved", "partially_solved", or "not_solved", depending on whether the assistant resolved the task.
 
